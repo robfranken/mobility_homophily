@@ -1,0 +1,222 @@
+---
+title: "Multivariate analyses"
+bibliography: references.bib
+link-citations: true
+date: "Last compiled on `r format(Sys.time(), '%B, %Y')`"
+output: 
+  html_document:
+    css: tweaks.css
+    toc:  true
+    toc_float: true
+    number_sections: false
+    toc_depth: 2
+    code_folding: show
+    code_download: yes
+---
+
+```{r, globalsettings, echo=FALSE, warning=FALSE, results='hide',message=FALSE}
+library(knitr)
+library(tidyverse)
+knitr::opts_chunk$set(echo = TRUE)
+opts_chunk$set(tidy.opts=list(width.cutoff=100),tidy=TRUE, warning = FALSE, message = FALSE,comment = "#>", cache=TRUE, class.source=c("test"), class.output=c("test3"))
+options(width = 100)
+rgl::setupKnitr()
+
+
+colorize <- function(x, color) {sprintf("<span style='color: %s;'>%s</span>", color, x) }
+```
+
+
+```{r klippy, echo=FALSE, include=TRUE}
+klippy::klippy(position = c('top', 'right'))
+#klippy::klippy(color = 'darkred')
+#klippy::klippy(tooltip_message = 'Click to copy', tooltip_success = 'Done')
+```
+
+
+
+---  
+  
+# Getting started
+
+To copy the code, click the button in the upper right corner of the code-chunks.
+
+## clean up
+
+```{r, eval=FALSE, results='hide'}
+rm(list=ls())
+gc()
+```
+
+<br>
+
+## general custom functions
+
+- `fpackage.check`: Check if packages are installed (and install if not) in R
+- `fsave`: Function to save data with time stamp in correct directory
+- `fload`: Function to load R-objects under new names
+- `fshowdf`: Print objects (`tibble` / `data.frame`) nicely on screen in `.Rmd`.
+- `ffit`: fit a series of (here, generalized linear mixed-effects) models 
+
+```{r}
+fpackage.check <- function(packages) {
+    lapply(packages, FUN = function(x) {
+        if (!require(x, character.only = TRUE)) {
+            install.packages(x, dependencies = TRUE)
+            library(x, character.only = TRUE)
+        }
+    })
+}
+
+fsave <- function(x, file, location = "./data/processed/", ...) {
+    if (!dir.exists(location))
+        dir.create(location)
+    datename <- substr(gsub("[:-]", "", Sys.time()), 1, 8)
+    totalname <- paste(location, datename, file, sep = "")
+    print(paste("SAVED: ", totalname, sep = ""))
+    save(x, file = totalname)
+}
+
+fload  <- function(fileName){
+  load(fileName)
+  get(ls()[ls() != "fileName"])
+}
+
+fshowdf <- function(x, digits = 2, ...) {
+    knitr::kable(x, digits = digits, "html", ...) %>%
+        kableExtra::kable_styling(bootstrap_options = c("striped", "hover")) %>%
+        kableExtra::scroll_box(width = "100%", height = "300px")
+}
+
+ffit <- function(formula, data) {
+  tryCatch({
+    model <- lme4::glmer(formula, data = data, family = binomial(link = "logit"),
+                   control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5)))
+    cat("Fitting model:", as.character(formula), "\n")
+    summary(model)
+    cat("\n")
+    return(model)
+  }, error = function(e) {
+    cat("Error fitting model:", as.character(formula), "\n")
+    cat("Error message:", conditionMessage(e), "\n")
+    return(NULL)
+  })
+}
+```
+
+<br>
+
+## necessary packages
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+packages = c("tidyverse", "ggplot2", "GenBinomApps")
+fpackage.check(packages)
+rm(packages)
+``` 
+
+<br>
+
+## load data-set
+
+Load the replicated data-set. To load the file, adjust the filename in the following code so that it matches the most recent version of the `.RDa` file you have in your `./data/processed/` folder.
+
+You may also obtain them by downloading: `r xfun::embed_file("./data_shared/data_nested.RDa")`
+
+
+```{r}
+#list files in processed data folder
+list.files("./data/processed/")
+
+#get todays date:
+today <- gsub("-", "", Sys.Date() - 1)
+
+#use fload
+df <- fload(paste0("./data/processed/", today, "data_nested.RDa"))
+```
+
+<br>
+
+## last alterations
+
+- standardize embeddedness in other network layers
+- proximity levels
+
+```{r}
+df$embed.ext <- df$embed.ext/3
+df$proximity <- factor(df$proximity, levels = c("far","close","roommate"))
+
+
+
+```
+
+<br>
+
+# Descriptives
+
+**who maintains educationally (dis)similar friends and confidants, and does this depend on one's mobility trajectory?**
+
+```{r}
+# function to calculate proportion self-similar and dis-similar alters that is maintained (and their ratio), for a given group (e.g., uni), tie type (e.g, friend), period (e.g., first period), cohort (e.g., first years), and mobility trajectory (e.g., upwardly mobile)
+
+fprops <- function(df, ego_educ = NULL, tie = NULL, mobility = NULL, period = NULL, year = NULL) {
+  subset_df <- df
+  # apply filters if specified
+  if (!is.null(ego_educ)) {
+    subset_df <- subset_df[subset_df$ego_educ == ego_educ, ]
+  }
+  if (!is.null(tie)) {
+    subset_df <- subset_df[subset_df$tie == tie, ]
+  }
+  if (!is.null(mobility)) {
+    subset_df <- subset_df[subset_df$mobility == mobility, ]
+  }
+  if (!is.null(period)) {
+    subset_df <- subset_df[subset_df$period == period, ]
+  }
+  if (!is.null(year)) {
+    subset_df <- subset_df[subset_df$study.year == year, ]
+  }
+  
+  # means for sim_educ == 1 and sim_educ == 0 and the ratio
+  mean_sim1 <- mean(subset_df[subset_df$sim_educ == 1, ]$Y, na.rm = TRUE)
+  n1 <- nrow(subset_df[subset_df$sim_educ == 1,])
+  mean_sim0 <- mean(subset_df[subset_df$sim_educ == 0, ]$Y, na.rm = TRUE)
+  n0 <- nrow(subset_df[subset_df$sim_educ == 0,])
+  mean_ratio <- mean_sim1 / mean_sim0
+  
+  return(list(mean_sim1 = mean_sim1,
+              mean_sim0 = mean_sim0,
+              mean_ratio = mean_ratio,
+              n1 = n1, 
+              n0 = n0))
+}
+
+fprops(df)
+
+# university students drop non-university friends more often:
+fprops(df, ego_educ = "7", tie = "Friend")
+fprops(df, ego_educ = "6", tie = "Friend")
+
+# stronger in first period
+fprops(df, ego_educ = "7", tie = "Friend", period = "w1 -> w2")
+fprops(df, ego_educ = "7", tie = "Friend", period = "w2 -> w3")
+
+# also for confidants:
+fprops(df, ego_educ = "7", tie = "Confidant")
+fprops(df, ego_educ = "6", tie = "Confidant")
+
+# depending on (intergenerational) mobility trajectory?
+fprops(df, ego_educ = "7", tie = "Friend", mobility = "stable", period = "w1 -> w2")
+fprops(df, ego_educ = "7", tie = "Friend", mobility = "stable", period = "w2 -> w3")
+
+fprops(df, ego_educ = "7", tie = "Friend", mobility = "ascending", period = "w1 -> w2")
+fprops(df, ego_educ = "7", tie = "Friend", mobility = "ascending", period = "w2 -> w3")
+``` 
+
+<br>
+
+----
+
+
+# References
+
