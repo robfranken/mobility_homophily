@@ -25,13 +25,11 @@ rgl::setupKnitr()
 colorize <- function(x, color) {sprintf("<span style='color: %s;'>%s</span>", color, x) }
 ```
 
-
 ```{r klippy, echo=FALSE, include=TRUE}
 klippy::klippy(position = c('top', 'right'))
 #klippy::klippy(color = 'darkred')
 #klippy::klippy(tooltip_message = 'Click to copy', tooltip_success = 'Done')
 ```
-
 
 ---  
 
@@ -1766,7 +1764,7 @@ edu_rank <- c(
   "n.v.t." = NA
 )
 
-df$mother_rank <- edu_rank[df$educ_father]
+df$mother_rank <- edu_rank[df$educ_mother]
 df$father_rank <- edu_rank[df$educ_father]
 
 # of ego
@@ -2301,10 +2299,11 @@ for (i in 1:length(alterL)) {
 
 #match ego-covars (based on 'df'.) 
 for (i in 1:length(alterL)) {
-  alterL[[i]]$ego_gender <- df$ego_gender[which(df$ego==1)][1]
-  alterL[[i]]$ego_age <- df$ego_age[which(df$ego==1)][1]
-  alterL[[i]]$ego_educ <- df$ego_educ[which(df$ego==1)][1]
+  alterL[[i]]$ego_gender <- df$ego_gender[which(df$ego==i)][1]
+  alterL[[i]]$ego_age <- df$ego_age[which(df$ego==i)][1]
+  alterL[[i]]$ego_educ <- df$ego_educ[which(df$ego==i)][1]
 }
+
 
 #sameness
 for (i in 1:length(alterL))  { # for ego i
@@ -2413,7 +2412,7 @@ df_created <- df
 #save(empties,file="./data/empty_entries_indicators.Rda")
 empties <- fload("./data_shared/empty_entries_indicators.Rda")
 
-df_created <- df_created[-empties,]
+df_created <- df_created[-empties, ]
 ``` 
 
 ```{r, eval=FALSE}
@@ -3016,7 +3015,6 @@ test$reason <- ifelse(test$reason == "Andere reden.", "miscellaneous", ifelse(te
                       "forgotten", test$reason))))))))
 
 data_alters23 <- test
-
 ``` 
 
 ```{r, eval=FALSE}
@@ -3060,6 +3058,7 @@ df$ego_female <- ifelse(df$ego_gender == 2, 1, df$ego_gender)
 df$alter_female <- ifelse(df$alter_gender == 2, 1, df$alter_gender)
 
 # drop columns we won't need
+#names(df)
 keep <- c(2:4,6:14, 16:20, 26, 29, 31:37, 39:51, 53:74, 76:88)
 df <- df[, keep]
 
@@ -3080,7 +3079,6 @@ order <- c("ego", "ego_female", "ego_age", "ego_educ", "study.year", "romantic",
     "reason")
 
 df <- df[, order]
-
 
 # multiplex t2
 df$multiplex.t2 <- rowSums(df[, c("cdn2", "study2", "bff2", "csn2")]) - 1
@@ -3314,7 +3312,6 @@ length(unique(data$alterid))  #N_alter = 1806
 
 Make some last alterations, list the data-frames for waves 1-2 and 2-3. Also row-bind the data, and add a column indicating when the tie appeared and when it (did not) reappear.
 
-
 ```{r, eval=FALSE}
 # make colnames similar
 colnames(data12)[colnames(data12) == "frequency.t1"] <- "frequency.t"
@@ -3347,6 +3344,164 @@ fsave(data, "data_nested.Rda")
 ``` 
 
 <br>
+
+# data.Rda
+
+Alternatively, stay at the "alter-level". That is:
+
+- alters can be *friend* (ref. = *confidant*), and multiplex (i.e., friend AND confidant), and may engage in additional behavioral interactions (aka *foci*; i.e., studying / sporting with ego);
+- alters have many characteristics (e.g., age, gender); so does the *dyad* (sameness, embeddedness, etc.).
+- we have *size* at the network-level (i.e., no. of unique alters listed as friend and/or confidant at time t);
+- as the dependent variable we simply take whether a tie is *maintained* (in whatever name generator);
+- ego-level predictors are *education* (hbo/wo), *study year* (1st / 2nd / >= 3rd), and, crucially, *mobility trajectory* (ascending / stable / descending)
+- take as fixed effect the *period x status* [i.e., w1 --> w2 (ref.); w2 (created) --> w3; w2 (maintained) --> w3], because tie maintenance likely depends on the period (the first is longer, but also happens before a key transition (among 1st years); and in the second period, whether a person was already maintained or newly formed likely matters for subsequent maintenance probability)
+
+## wave 1 -> wave 2
+
+```{r, eval = FALSE}
+# filter out wave 2 created (i.e., focus only on w1-maintained vs dropped)
+df1 <- df[-which(df$statusW2 == "Created"), ]
+nrow(df1)  #n=3174
+
+# subset columns of interest
+df1 <- df1 %>%
+  select(c(ego, ego_female, ego_age, ego_educ, study.year, father_rank, mother_rank, mobility, cdn.size, cdn.density, bff.size, bff.density,
+           alterid, alter_female, alter_age, alter_educ, same_gender, dif_age, sim_educ, proximity, duration, closeness.t1, frequency.t1,
+           closeness.t2, frequency.t2, cdn1, cdn2, bff1, bff2, study1, study2, csn1, csn2, cdn_embed.t1, bff_embed.t1))
+
+# make variables reflecting whether alter was friend/confidant (and uniplex/multiplex), and whether alter was also active in sports and study with ego
+df1$friend <- ifelse(df1$bff1 == 1, 1, 0)
+df1$confidant <- ifelse(df1$cdn1 == 1, 1, 0)
+df1$multiplex <- ifelse(df1$bff1 == 1 & df1$cdn1 == 1, 1, 0)
+df1$sport <- ifelse(df1$csn1 == 1, 1, 0)
+df1$study <- ifelse(df1$study1 == 1, 1, 0)
+
+# now keep only info about friends and confidants
+df1 <- df1[df1$friend == 1 | df1$confidant == 1, ]
+
+# for network size, simply take the sum
+df1$size <- df1$bff.size + df1$cdn.size
+
+# for embeddedness, we take the score of the network in which the alter appeared
+# if multiplex, take the mean embeddedness score
+df1$embed <- ifelse(df1$multiplex == 1,
+                    # for multiplex alters, take the mean embeddedness score (replacing NA by 0)
+                    (ifelse(is.na(df1$bff_embed.t1), 0, df1$bff_embed.t1) + 
+             ifelse(is.na(df1$cdn_embed.t1), 0, df1$cdn_embed.t1))/2,
+             
+             #otherwise, take the embeddedness score of alter in their netwrk layer (again replacing NA by 0)
+             ifelse(df1$friend == 1, ifelse(is.na(df1$bff_embed.t1), 0, df1$bff_embed.t1), # friend layer
+                    ifelse(is.na(df1$cdn_embed.t1), 0, df1$cdn_embed.t1)) # confidant layer
+)
+
+# outcome: maintained as friend AND/OR confidant
+df1$maintained <- ifelse(df1$cdn2 == 1 | df1$bff2 == 1, 1, 0)
+# NA refers to 'no chance to being renamed' (i.e., did not reappear in any name generator)
+df1$maintained[is.na(df1$maintained)] <- 0
+
+#prop.table(table(df1$maintained, useNA="always")) # 70% ties maintained
+``` 
+<br>
+
+## wave 2 -> wave 3
+
+```{r, eval = FALSE}
+# look at w2-alters, so drop w2-dropped; focus only on egos who participated in w3
+df2 <- df[-which(df$statusW2 == "Dropped"), ]
+df2 <- df2[df2$w3participation == 1, ]
+nrow(df2)  #n=1888
+
+# subset columns of interest
+df2 <- df2 %>%
+  select(c(ego, ego_female, ego_age, ego_educ, study.year, father_rank, mother_rank, mobility, cdn.size2, cdn.density2, bff.size2, bff.density2,
+           alterid, alter_female, alter_age, alter_educ, same_gender, dif_age, sim_educ, proximity, duration, closeness.t2, frequency.t2,
+           closeness.t3, frequency.t3, cdn2, cdn3, bff2, bff3, study2, study3, csn2, csn3, cdn_embed.t2, bff_embed.t2, statusW2))
+
+# make variables reflecting whether alter was friend/confidant (and uniplex/multiplex), and whether alter was also active in sports and study with ego
+df2$friend <- ifelse(df2$bff2 == 1, 1, 0)
+df2$confidant <- ifelse(df2$cdn2 == 1, 1, 0)
+df2$multiplex <- ifelse(df2$bff2 == 1 & df2$cdn2 == 1, 1, 0)
+df2$sport <- ifelse(df2$csn2 == 1, 1, 0)
+df2$study <- ifelse(df2$study2 == 1, 1, 0)
+
+# now keep only info about friends and confidants
+df2 <- df2[df2$friend == 1 | df2$confidant == 1, ]
+
+# for network size, simply take the sum (of non-kin ties across both network dimensions)
+df2$size <- df2$bff.size2 + df2$cdn.size2
+
+# for embeddedness, we take the score of the network in which the alter appeared
+# if multiplex, take the mean embeddedness score
+df2$embed <- ifelse(df2$multiplex == 1,
+                    # for multiplex alters, take the mean embeddedness score (replacing NA by 0)
+                    (ifelse(is.na(df2$bff_embed.t2), 0, df2$bff_embed.t2) + 
+             ifelse(is.na(df2$cdn_embed.t2), 0, df2$cdn_embed.t2))/2,
+             
+             #otherwise, take the embeddedness score of alter in their netwrk layer (again replacing NA by 0)
+             ifelse(df2$friend == 1, ifelse(is.na(df2$bff_embed.t2), 0, df2$bff_embed.t2), # friend layer
+                    ifelse(is.na(df2$cdn_embed.t2), 0, df2$cdn_embed.t2)) # confidant layer
+)
+
+# outcome: maintained as friend AND/OR confidant
+df2$maintained <- ifelse(df2$cdn3 == 1 | df2$bff3 == 1, 1, 0)
+# NA refers to 'no chance to being renamed' (i.e., did not reappear in any name generator)
+df2$maintained[is.na(df2$maintained)] <- 0
+
+#prop.table(table(df2$maintained, useNA="always")) # 71% ties maintained
+``` 
+
+<br>
+
+Now bind together
+
+```{r, eval=FALSE}
+df1$period <- "1"
+df2$period <- paste0(2, " (", tolower(df2$statusW2), ")")
+df2 <- df2 %>% select(-c(statusW2))
+
+# make colnames similar
+colnames(df1)[colnames(df1) == "frequency.t1"] <- "frequency.t"
+colnames(df1)[colnames(df1) == "closeness.t1"] <- "closeness.t"
+colnames(df1)[colnames(df1) == "frequency.t2"] <- "frequency.tplus"
+colnames(df1)[colnames(df1) == "closeness.t2"] <- "closeness.tplus"
+
+colnames(df2)[colnames(df2) == "frequency.t2"] <- "frequency.t"
+colnames(df2)[colnames(df2) == "closeness.t2"] <- "closeness.t"
+colnames(df2)[colnames(df2) == "frequency.t3"] <- "frequency.tplus"
+colnames(df2)[colnames(df2) == "closeness.t3"] <- "closeness.tplus"
+
+#subset and rbind
+df1 <- df1 %>%
+  select(-c(cdn.size, cdn.density, bff.size, bff.density, cdn1, cdn2, bff1, bff2, study1, study2, csn1, csn2, cdn_embed.t1, bff_embed.t1))
+
+df2 <- df2 %>%
+  select(-c(cdn.size2, cdn.density2, bff.size2, bff.density2, cdn2, cdn3, bff2, bff3, study2, study3, csn2, csn3, cdn_embed.t2, bff_embed.t2))
+
+df <- rbind(df1,df2)
+df <- df[order(df$ego, df$alterid, df$period), ]
+rownames(df) <- 1:nrow(df)
+#fix(df)
+
+# lastly, fix some remaining missings on w2-created alters, by replacing them with
+# valid value from other period
+df <- df %>%
+  group_by(ego) %>%
+  mutate(across(c(study.year, father_rank, mother_rank, mobility),
+                ~ if_else(period == "2 (created)" & is.na(.),
+                          first(na.omit(.)),
+                          .)))
+# listwise deletion
+colSums(is.na(df))  #missings per variable
+df$proximity <- ifelse(is.na(df$proximity), "far", df$proximity)  #some don't knows on alter proximity, set to 'far'
+
+df <- df[which(complete.cases(df)), ]
+length(unique(df$ego)) #493 egos
+length(unique(paste0(df$ego, "x", df$alterid))) #245 alters
+nrow(df) #3256 observations
+
+#save
+fsave(df, "data.Rda")
+``` 
 
 ----
 

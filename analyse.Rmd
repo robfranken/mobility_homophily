@@ -109,7 +109,7 @@ ffit <- function(formula, data) {
 ## necessary packages
 
 ```{r, results='hide', message=FALSE, warning=FALSE}
-packages = c("tidyverse", "ggplot2", "GenBinomApps")
+packages = c("tidyverse", "ggplot2", "lme4", "lmtest")
 fpackage.check(packages)
 rm(packages)
 ``` 
@@ -120,7 +120,7 @@ rm(packages)
 
 Load the replicated data-set. To load the file, adjust the filename in the following code so that it matches the most recent version of the `.RDa` file you have in your `./data/processed/` folder.
 
-You may also obtain them by downloading: `r xfun::embed_file("./data_shared/data_nested.RDa")`
+You may also obtain them by downloading: `r xfun::embed_file("./data_shared/data.RDa")`
 
 
 ```{r}
@@ -128,44 +128,134 @@ You may also obtain them by downloading: `r xfun::embed_file("./data_shared/data
 list.files("./data/processed/")
 
 #get todays date:
-today <- gsub("-", "", Sys.Date() - 1)
+today <- gsub("-", "", Sys.Date() -1 )
 
 #use fload
-df <- fload(paste0("./data/processed/", today, "data_nested.RDa"))
+#df <- fload(paste0("./data/processed/", today, "data_nested.RDa")) #this is a dataset containing ties (e.g., sport/friend) within dyads
+
+df <- fload(paste0("./data/processed/", today, "data.RDa")) # this dataset is at the "alter-level", focusing only on friends/confidants (treating ties as maintained as they re-appear in the friend/confidant name generator)
+
+# we have data on ...
+length(unique(df$ego)) # 493 unique egos
+length(unique(paste0(df$ego, "x", df$alterid))) # 2450 unique alters (friend/confidant)
+nrow(df) * prop.table(table(df$period)) # who were observed 3256 times across observations
 ```
 
 <br>
 
-## last alterations
+---
 
-- standardize embeddedness in other network layers
-- proximity levels
+# Descriptives {.tabset .tabset-fade}
 
-```{r}
-df$embed.ext <- df$embed.ext/3
-df$proximity <- factor(df$proximity, levels = c("far","close","roommate"))
+## ego
 
+```{r, class.source = 'fold-hide'}
+egos <- df %>%
+  group_by(ego) %>%
+  summarise(
+    age = first(ego_age),
+    female = first(ego_female),
+    male = 1 - first(ego_female),
+    ego_educ = first(ego_educ),
+    study_year = first(study.year),
+    father_educ = first(father_rank),
+    mother_educ = first(mother_rank),
+    mobility = first(mobility),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    uni = ifelse(ego_educ == 7, 1, 0),
+    hbo = ifelse(ego_educ == 6, 1, 0),
+    first_year = ifelse(study_year == 1, 1, 0),
+    second_year = ifelse(study_year == 2, 1, 0),
+    third_year = ifelse(study_year == 3, 1, 0),
+    mobility_descending = ifelse(mobility == "descending", 1, 0),
+    mobility_stable = ifelse(mobility == "stable", 1, 0),
+    mobility_ascending = ifelse(mobility == "ascending", 1, 0)
+  ) %>%
+  select(-ego, -ego_educ, -mobility, -study_year)
 
-
+fshowdf(psych::describe(egos)[-c(1,6,7,11,12, 13)], caption="ego-level descriptives")
 ```
 
-<br>
+## alter
 
-# Descriptives
+```{r, class.source = 'fold-hide'}
+alters <- df %>%
+  mutate(
+    alter_key = paste0(ego, "x", alterid)
+  ) %>%
+  group_by(alter_key) %>%
+  summarise(
+    female = first(alter_female),
+    male = 1- first(alter_female),
+    age  = first(as.numeric(alter_age)),
+    alter_educ     = first(alter_educ),
+    same_gender    = first(same_gender),
+    dif_age        = first(dif_age),
+    sim_educ       = first(sim_educ),
+    
+    # create dummies for alter_educ
+    primary = ifelse(first(alter_educ) == 1, 1, 0),
+    vmbo_mavo = ifelse(first(alter_educ) == 2, 1, 0),
+    mbo      = ifelse(first(alter_educ) == 3, 1, 0),
+    havo     = ifelse(first(alter_educ) == 4, 1, 0),
+    vwo_gymnasium = ifelse(first(alter_educ) == 5, 1, 0),
+    hbo      = ifelse(first(alter_educ) == 6, 1, 0),
+    uni       = ifelse(first(alter_educ) == 7, 1, 0),
+    #proximity
+    close    = ifelse(first(proximity) == "close", 1, 0),
+    roommate = ifelse(first(proximity) == "roommate", 1, 0),
+    far = ifelse(first(proximity) == "far", 1, 0),
+    
+    duration = first(duration),
+    .groups = "drop"
+  ) %>%
+  select(-alter_key, -alter_educ)
 
-**who maintains educationally (dis)similar friends and confidants, and does this depend on one's mobility trajectory?**
+fshowdf(psych::describe(alters)[-c(1,6,7,11,12, 13)], caption="alter-level descriptives")
+```
+
+## observations
+
+```{r, class.source = 'fold-hide'}
+obs <- df %>%
+  mutate(
+    alter_key = paste0(ego, "x", alterid)
+  ) %>%
+  select(
+    alter_key, closeness.t, frequency.t, friend, confidant,
+    multiplex, sport, study, size, embed, maintained, period
+  ) %>%
+  mutate(
+    period_1 = ifelse(period == "1", 1, 0),
+    period_2_maintained = ifelse(period == "2 (maintained)", 1, 0),
+    period_2_created = ifelse(period == "2 (created)", 1, 0)
+  ) %>%
+  select(-ego, -alter_key, -period)
+
+fshowdf(psych::describe(obs[,-1])[-c(1,6,7,11,12, 13)], caption="observation-level descriptives")
+``` 
+
+
+# {.unlisted .unnumbered}
+
+---
+
+## Homophily
+
+**Who maintains educationally (dis)similar friends and confidants, and does this depend on one's mobility trajectory?**
+
+calculate the intra- and inter-group tie maintenance probabilities, and their ratio, for specific subgroups:
 
 ```{r}
-# function to calculate proportion self-similar and dis-similar alters that is maintained (and their ratio), for a given group (e.g., uni), tie type (e.g, friend), period (e.g., first period), cohort (e.g., first years), and mobility trajectory (e.g., upwardly mobile)
+# function to calculate proportion self-similar and dis-similar alters that is maintained (and their ratio), for a given group (e.g., uni), period (e.g., first period), cohort (e.g., first years), and mobility trajectory (e.g., upwardly mobile)
 
-fprops <- function(df, ego_educ = NULL, tie = NULL, mobility = NULL, period = NULL, year = NULL) {
+fprops <- function(df, ego_educ = NULL, mobility = NULL, period = NULL, year = NULL) {
   subset_df <- df
   # apply filters if specified
   if (!is.null(ego_educ)) {
     subset_df <- subset_df[subset_df$ego_educ == ego_educ, ]
-  }
-  if (!is.null(tie)) {
-    subset_df <- subset_df[subset_df$tie == tie, ]
   }
   if (!is.null(mobility)) {
     subset_df <- subset_df[subset_df$mobility == mobility, ]
@@ -176,11 +266,11 @@ fprops <- function(df, ego_educ = NULL, tie = NULL, mobility = NULL, period = NU
   if (!is.null(year)) {
     subset_df <- subset_df[subset_df$study.year == year, ]
   }
-  
+
   # means for sim_educ == 1 and sim_educ == 0 and the ratio
-  mean_sim1 <- mean(subset_df[subset_df$sim_educ == 1, ]$Y, na.rm = TRUE)
+  mean_sim1 <- mean(subset_df[subset_df$sim_educ == 1, ]$maintained, na.rm = TRUE)
   n1 <- nrow(subset_df[subset_df$sim_educ == 1,])
-  mean_sim0 <- mean(subset_df[subset_df$sim_educ == 0, ]$Y, na.rm = TRUE)
+  mean_sim0 <- mean(subset_df[subset_df$sim_educ == 0, ]$maintained, na.rm = TRUE)
   n0 <- nrow(subset_df[subset_df$sim_educ == 0,])
   mean_ratio <- mean_sim1 / mean_sim0
   
@@ -188,35 +278,251 @@ fprops <- function(df, ego_educ = NULL, tie = NULL, mobility = NULL, period = NU
               mean_sim0 = mean_sim0,
               mean_ratio = mean_ratio,
               n1 = n1, 
-              n0 = n0))
+              n0 = n0,
+              obs = n1 + n0,
+              alters = length(unique(paste0(subset_df$ego, "x", subset_df$alterid))),
+              egos = length(unique(subset_df$ego))))
 }
+```
 
+```{r}
+# first consider all observations (pooled)
 fprops(df)
 
-# university students drop non-university friends more often:
-fprops(df, ego_educ = "7", tie = "Friend")
-fprops(df, ego_educ = "6", tie = "Friend")
+# university students have a bias towards dropping dissimilar alters:
+fprops(df, ego_educ = "7")
 
-# stronger in first period
-fprops(df, ego_educ = "7", tie = "Friend", period = "w1 -> w2")
-fprops(df, ego_educ = "7", tie = "Friend", period = "w2 -> w3")
+# slightly weaker among hbo students (but low N ...)
+fprops(df, ego_educ = "6")
 
-# also for confidants:
-fprops(df, ego_educ = "7", tie = "Confidant")
-fprops(df, ego_educ = "6", tie = "Confidant")
+# excluding hbo students' university friends strengthens the homophily bias, suggesting that the bias reflects not just a preference for similarity, but possibly an avoidance of 'downward' ties:
+df %>%
+  filter(alter_educ != 7 & ego_educ == 6) %>%
+  fprops()
 
-# depending on (intergenerational) mobility trajectory?
-fprops(df, ego_educ = "7", tie = "Friend", mobility = "stable", period = "w1 -> w2")
-fprops(df, ego_educ = "7", tie = "Friend", mobility = "stable", period = "w2 -> w3")
+# does bias depend on the period in which tie change is observed?
+fprops(df, ego_educ = "7", period = "1") # strongest in the 1st period
+fprops(df, ego_educ = "7", period = "2 (maintained)") # in part because the second period is (a) shorter and (b) includes alters who already "survived" one round--the effect of dissimilarity plausibly weakens when ego and alter keep in touch.
+fprops(df, ego_educ = "7", period = "2 (created)") # consistent with this idea, especially among newly formed ties the similarity bias is strong! 
 
-fprops(df, ego_educ = "7", tie = "Friend", mobility = "ascending", period = "w1 -> w2")
-fprops(df, ego_educ = "7", tie = "Friend", mobility = "ascending", period = "w2 -> w3")
+# does bias depend on (intergenerational) mobility trajectory? NOT if we compare stable and ascending among the pool of university students...
+fprops(df, ego_educ = "7", mobility = "stable")
+fprops(df, ego_educ = "7", mobility = "ascending")
+
+# among hbo students?
+# here we see that bias towards dropping educationally dissimilar friends is strongest among ascending students, followed by--in order--stable and descending students. Descending hbo-students actually maintain dissimilar friends more often!
+fprops(df, ego_educ = "6", mobility = "stable")
+fprops(df, ego_educ = "6", mobility = "ascending")
+fprops(df, ego_educ = "6", mobility = "descending")
+
+# what if we exclude hbo students university friends?
+# now the stable have the strongest ingroup bias (or bias against downward ties)
+fprops(df[df$ego_educ=="6" & df$alter_educ!=7, ], mobility = "stable")
+fprops(df[df$ego_educ=="6" & df$alter_educ!=7, ], mobility = "ascending")
+fprops(df[df$ego_educ=="6" & df$alter_educ!=7, ], mobility = "descending") # so the aversion towards similar others is not due to a tendency to maintain university ('higher') friends
 ``` 
+
+---
+
+# Multivariate analyses
+
+## random intercept logit model
+
+```{r}
+# focus on uni students for now
+df2 <- df[df$ego_educ == "7", ]
+
+# flat model (assuming no nesting of alters within egos)
+m0 <- glm(maintained ~ 1, data = df2, family = binomial(link = "logit"))
+#summary(m0)
+
+# add random ego-level intercept
+# predicting the odds of an alter being dropped from the network with no independent variables
+m01 <- glmer(maintained ~ 1 + (1 | ego), data = df2, family = binomial(link = "logit"), control = glmerControl(optimizer="bobyqa"))
+#summary(m01)
+
+# retrieve variance components
+varcomp <- VarCorr(m01)
+var2 <- varcomp$ego[1]
+var1 <- (pi^2)/3
+vpc2 <- (var2)/(var1+var2)
+vpc2
+# the model shows that the proportion of variance in the outcome (tie maintenance) explained by between-respondent variation is .074.
+
+# perform likelihood ratio test for differences in models
+lrtest(m0, m01)
+# this shows that the p-value for the null hypothesis that the variance at the ego-level is 0 is .000.
+
+# add fixed effects for period
+m02 <- glmer(maintained ~ 1 + (1 | ego) + period, data = df2, family = binomial(link = "logit"), control = glmerControl(optimizer="bobyqa"))
+summary(m02)
+
+# now let's introduce sets of variables: ego; alter; network; similarity; moderating role of mobility trajectory.
+# first define some last variables: 
+df2$sportstudy <- ifelse(df2$sport + df2$study > 1, 1, 0) # combine additional network layers
+df2$close <- ifelse(df2$proximity == "close", 1, 0)
+df2$roommate <- ifelse(df2$proximity == "roommate", 1, 0)
+df2$firstgen <- ifelse(df2$mobility == "ascending", 1, 0)
+
+formula <- list(
+  #0. null model
+  maintained ~ 1 + (1 | ego),
+  #1. incl. fixed effects of period*status
+  maintained ~ 1 + (1 | ego) + period,
+  #2. ego 
+  maintained ~ 1 + (1 | ego) + period + ego_female + as.factor(study.year),
+  #3. alter
+  maintained ~ 1 + (1 | ego) + period + ego_female + as.factor(study.year) + 
+              confidant + multiplex + sportstudy + scale(duration) + close + roommate + frequency.t + closeness.t,
+  #4. network
+  maintained ~ 1 + (1 | ego) + period + ego_female + as.factor(study.year) + 
+              confidant + multiplex + sportstudy + scale(duration) + close + roommate + frequency.t + closeness.t + size,
+  #5. dyadic similarity
+  maintained ~ 1 + (1 | ego) + period + ego_female + as.factor(study.year) + confidant + multiplex + sportstudy + scale(duration) + close + roommate + frequency.t + closeness.t + size + sim_educ + same_gender + dif_age,
+  
+  #6. interaction between same education and first-generation student
+    maintained ~ 1 + (1 | ego) + period + ego_female + as.factor(study.year) + confidant + multiplex + sportstudy + scale(duration) + close + roommate + frequency.t + closeness.t + size + sim_educ + same_gender + dif_age + firstgen*sim_educ
+  )
+
+#estimate using ffit
+ans <- lapply(formula, ffit, data = df2)
+
+#use likelihood ratio test to compare models
+do.call(lrtest, ans)
+```
+```{r, eval=FALSE, echo=FALSE}
+texreg::htmlreg(ans,
+        file="./results/coeftab.html",
+        caption="Results of models predicting tie maintenance at t+1 (1=yes, 0=no)", caption.above = TRUE, 
+        custom.model.names = c("Null model", "Period effects", "Ego controls", "Alter controls", "Network controls", "Dyadic similarity", "Interaction"),
+        custom.coef.names = c("(Intercept)", 
+                              "Period 2 (created)",
+                              "Period 2 (maintained)",
+                              "Female", "Second-year (ref. = first-year", "Third-year or higher",
+                              "Confidant (ref. = friend)", "Multiplex", "Sport / study", "Years known", "Same municipality (ref. = farther away)", "Same house", "Communication frequency", "Emotional closeness", "Network size", "Same education", "Same gender", "Age difference", "First-gen student (ref. = continuing-gen)", "Same education:first-gen student"),
+        digits=2, single.row = TRUE
+        )
+```
+
+```{r, echo = FALSE}
+htmltools::tags$div(
+  style = "height: 600px; overflow-y: scroll;",
+  htmltools::includeHTML("./results/coeftab.html")
+)
+```
+
 
 <br>
 
-----
+## marginal (interaction) effects
+
+Calculate and visualize (average / distribution of) marginal (interaction) effects.
+
+### marginal effect of same education
+
+```{r, fig.width=10}
+# 1. define datasets
+# educational similarity:
+df2sim1 <- df2sim0 <- df2
+df2sim1$sim_educ <- 1
+df2sim0$sim_educ <- 0
+
+# 2. interaction with first-gen
+df2asc1sim1 <- df2asc1sim0 <- df2asc0sim1 <- df2asc0sim0 <- df2
+{
+  df2asc1sim1$firstgen <- 1
+  df2asc1sim1$sim_educ <- 1  
+  df2asc0sim1$firstgen <- 0
+  df2asc0sim1$sim_educ <- 1  
+  df2asc1sim0$firstgen <- 1
+  df2asc1sim0$sim_educ <- 0
+  df2asc0sim0$firstgen <- 0
+  df2asc0sim0$sim_educ <- 0
+}
+
+m4 <- ans[[6]]
+m5 <- ans[[7]]
+
+# marginal effect of similarity:
+#mean(lme4:::predict.merMod(m4, type = "response", re.form = NULL, newdata = df2sim1) - lme4:::predict.merMod(m4, type = "response", re.form = NULL, newdata = df2sim0))
+me_sim <- lme4:::predict.merMod(m5, type = "response", re.form = NULL, newdata = df2sim1) - lme4:::predict.merMod(m5, type = "response", re.form = NULL, newdata = df2sim0)
+
+# plot
+dens <- ggplot(data.frame(me_sim), aes(x = me_sim)) +
+  geom_density(fill = "lightblue", alpha = 0.5) +
+  geom_vline(aes(xintercept = mean(me_sim)), color = "red", linetype = "dashed") +
+  annotate("text", x = mean(me_sim), y = max(density(me_sim)$y), vjust = 3, hjust = -0.1, label = paste0("AME = ", round(mean(me_sim), 3)), color = "red", size = 3.5) +
+  labs(title = "Density curve of marginal effects",
+       x = "Marginal effect (first difference)",
+       y = "Density") +
+  theme_minimal() +
+  xlim(0, NA)
+
+# calculate predicted probabilities, include random effects.
+preds <- predict(m5, type = "response", re.form = NULL, newdata = df2) 
+
+dens2 <- ggplot(data.frame(me_sim, preds), aes(x = preds, y = me_sim)) +
+  geom_point(alpha = 0.4, color = "forestgreen") +
+   geom_smooth(method = "loess", se = TRUE, color = "darkorange") +
+  labs(
+    title = "Marginal effect vs. predicted probability",
+    x = "Predicted probability",
+    y = "Marginal effect"
+  ) +
+  theme_minimal()
+
+ggpubr::ggarrange(dens,dens2, labels = c("(A)", "(B)"))
+```
+
+On average, across all university students in our dataset and their observed characteristics, having a friend who also attends university increases the probability of maintaining the relationship by approximately 6 percentage points.
+
+<br>
+
+### interaction with first-gen student
+
+```{r, fig.width=10}
+# marginal interaction effect:
+p11 <- lme4:::predict.merMod(m5, type = "response", re.form = NULL, newdata = df2asc1sim1)
+p10 <- lme4:::predict.merMod(m5, type = "response", re.form = NULL, newdata = df2asc1sim0)
+p01 <- lme4:::predict.merMod(m5, type = "response", re.form = NULL, newdata = df2asc0sim1)
+p00 <- lme4:::predict.merMod(m5, type = "response", re.form = NULL, newdata = df2asc0sim0)
+
+mie_sim_asc <- (p11 - p10) - (p01 - p00)
+
+#represents how the marginal effect of same education changes when going from continuing-gen to first-gen student:
+dens <- ggplot(data.frame( mie_sim_asc), aes(x = mie_sim_asc)) +
+  geom_density(fill = "lightblue", alpha = 0.5) +
+  geom_vline(aes(xintercept = mean(mie_sim_asc)), color = "darkblue", linetype = "dashed") +
+  annotate(
+    "text",
+    x = mean(mie_sim_asc),
+    y = max(density(mie_sim_asc)$y),
+    vjust = 3, hjust = -0.1,
+    label = paste0("AMIE = ", round(mean(mie_sim_asc), 3)),
+    color = "darkblue", size = 3.5
+  ) +
+  labs(
+    title = "Density curve of marginal interaction effects",
+    x = "Marginal interaction effect (difference-in-differences)",
+    y = "Density"
+  ) +
+  theme_minimal() +
+  xlim(min(mie_sim_asc), max(mie_sim_asc))
+
+dens2 <- ggplot(data.frame(mie_sim_asc, preds), aes(x = preds, y = mie_sim_asc)) +
+  geom_point(alpha = 0.4, color = "forestgreen") +
+  geom_smooth(method = "loess", se = TRUE, color = "darkorange") +
+  labs(
+    title = "Marginal interaction effect vs. predicted probability",
+    x = "Predicted probability",
+    y = "Marginal interaction effect"
+  ) +
+  theme_minimal()
+
+ggpubr::ggarrange(dens,dens2, labels = c("(A)", "(B)"))
+``` 
+
+The average marginal effect is approximately 2.2 percentage points smaller for first-generation students compared to their continuing-generation counterparts--on average, across all university students in our sample-- indicating that educational similarity matters less for tie maintenance among first-gen students. While modest in absolute terms, in relative terms, this reduction represents more than 1/3 of the average marginal effect.
 
 
-# References
 
