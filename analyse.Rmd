@@ -88,9 +88,9 @@ fshowdf <- function(x, digits = 2, ...) {
         kableExtra::scroll_box(width = "100%", height = "300px")
 }
 
-ffit <- function(formula, data) {
+ffit <- function(formula, data, link = "logit") {
   tryCatch({
-    model <- lme4::glmer(formula, data = data, family = binomial(link = "logit"),
+    model <- lme4::glmer(formula, data = data, family = binomial(link = link),
                    control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5)))
     cat("Fitting model:", as.character(formula), "\n")
     summary(model)
@@ -389,7 +389,7 @@ ans <- lapply(formula, ffit, data = df2)
 
 #use likelihood ratio test to compare models
 do.call(lrtest, ans)
-```
+``` 
 ```{r, eval=FALSE, echo=FALSE}
 texreg::htmlreg(ans,
         file="./results/coeftab.html",
@@ -459,7 +459,7 @@ dens <- ggplot(data.frame(me_sim), aes(x = me_sim)) +
   xlim(0, NA)
 
 # calculate predicted probabilities, include random effects.
-preds <- predict(m5, type = "response", re.form = NULL, newdata = df2) 
+preds <- lme4:::predict.merMod(m5, type = "response", re.form = NULL, newdata = df2) 
 
 dens2 <- ggplot(data.frame(me_sim, preds), aes(x = preds, y = me_sim)) +
   geom_point(alpha = 0.4, color = "forestgreen") +
@@ -523,6 +523,61 @@ ggpubr::ggarrange(dens,dens2, labels = c("(A)", "(B)"))
 ``` 
 
 The average marginal effect is approximately 2.2 percentage points smaller for first-generation students compared to their continuing-generation counterparts--on average, across all university students in our sample-- indicating that educational similarity matters less for tie maintenance among first-gen students. While modest in absolute terms, in relative terms, this reduction represents more than 1/3 of the average marginal effect.
+
+<br>
+
+```{r, fig.width=10}
+# predictions based on observed covariates
+df2$pred <- preds
+
+# predictions with covariates at the sample mean (continuous) or reference level
+df3 <- df2
+#all_vars <- names(fixef(m5))[-1]  # remove intercept
+
+df3$period = "1"
+df3$ego_female = 1
+df3$study.year = 1
+df3$confidant = 0
+df3$multiplex = 0
+df3$sportstudy = 0
+df3$duration <- mean(df3$duration)
+df3$close <- 0
+df3$roommate <- 0
+df3$frequency.t <- mean(df3$frequency.t)
+df3$closeness.t <- mean(df3$closeness.t)
+df3$size <- mean(df3$size)
+df3$dif_age <- mean(df3$dif_age)
+df3$same_gender <- 0
+
+df3$pred <- lme4:::predict.merMod(m5, type = "response", re.form = NULL, newdata = df3)
+
+obs <- ggplot(df2, aes(x = factor(sim_educ, levels = c(0, 1)), y = pred, color = factor(firstgen))) +
+  geom_line(aes(group = firstgen), size = 1.5) +  
+  geom_point(size = 3, alpha = 0.1) +  
+  labs(
+    x = "Same education",
+    y = "Predicted probability",
+    color = "First-generation student",
+    title = "Predicted probabilities based on similarity and mobility",
+    subtitle = "using observed covariates"
+  ) +
+  theme_minimal()
+
+mea <- ggplot(df3, aes(x = factor(sim_educ, levels = c(0, 1)), y = pred, color = factor(firstgen))) +
+  geom_line(aes(group = firstgen), size = 1.5) + 
+  geom_point(size = 3, alpha = 0.1) + 
+  labs(
+    x = "Same education",
+    y = "Predicted probability",
+    color = "First-generation student",
+    title = "Predicted probabilities based on similarity and mobility",    
+    subtitle = "covariates set at the mean / reference level"
+  ) +
+  theme_minimal()
+
+ggpubr::ggarrange(obs,mea, labels = c("(A)", "(B)"), common.legend = TRUE, legend="bottom")
+```
+
 
 
 
